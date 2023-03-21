@@ -1,13 +1,29 @@
 buildscript {
+    apply from: "config/index.gradle"
     ext.kotlin_version = '1.6.10'
+    ext.dokka_version = '1.7.20'
+
+    CONFIG.versions.android.sdk.min = 23
+    CONFIG.versions.android.sdk.target = 33
+    CONFIG.versions.android.sdk.compile = 33
+    CONFIG.versions.android.libraries.support = "26.1.0"
+    CONFIG.versions.okhttp = "4.9.3"
+    CONFIG.versions.thirdParty.gson = "2.10"
 
     repositories {
         google()
         mavenCentral()
+        gradle()
     }
 
     dependencies {
+        classpath "com.android.tools.build:gradle:$CONFIG.versions.android.plugin"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'gradle.plugin.com.github.spotbugs.snom:spotbugs-gradle-plugin:4.6.0'
     }
 }
 
+plugins {
+    id 'io.gitlab.arturbosch.detekt' version '1.21.0'
+    id("net.ltgt.errorprone") version "3.0.1"
+}
