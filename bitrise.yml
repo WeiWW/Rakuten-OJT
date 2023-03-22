@@ -1,0 +1,159 @@
+format_version: 11
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: android
+trigger_map:
+  - push_branch: "master"
+    workflow: build-and-test
+  - pull_request_source_branch: "*"
+    pull_request_target_branch: "master"
+    workflow: build-and-test
+  - tag: "v*.*.*+*"
+    workflow: build-and-test
+workflows:
+  build-and-test:
+    before_run:
+      - _setup-env
+      - _common-start
+    after_run:
+      - _common-end
+    steps:
+      - cache-pull@2: {}
+      - script@1:
+          title: Run some verification tasks
+          inputs:
+            - content: "./gradlew detekt detektRelease lintAnalyzeDebug lintDebug lintReportDebug testDebugUnitTest jacocoDebugReport"
+      - custom-test-results-export@0:
+          inputs:
+            - test_name: "${SDK_PATH}_debug"
+            - base_path: "$SDK_PATH/build/test-results/testDebugUnitTest/"
+            - search_pattern: "*"
+  integration-test:
+    before_run:
+      - _setup-env
+    steps:
+      - script@1:
+          title: Dependency Check
+          inputs:
+            - content: ./gradlew dependencyCheckAggregate
+      - script@1:
+          title: Run Tests
+          inputs:
+            - content: ./gradlew clean testRelease --tests com.rakuten.tech.mobile.inappmessaging.runtime.integration.IntegrationSpec
+      - custom-test-results-export@0:
+          inputs:
+            - test_name: Integration Tests
+            - base_path: "$SDK_PATH/build/test-results/testReleaseUnitTest/"
+            - search_pattern: "*"
+      - deploy-to-bitrise-io@2:
+          inputs:
+            - deploy_path: "$SDK_PATH/build/test-results/testReleaseUnitTest/"
+            - is_enable_public_page: 'false'
+      - slack@3:
+          inputs:
+            - channel: ''
+            - webhook_url: "$SLACK_CHANNEL_WEBHOOK"
+            - text: ''
+            - title: ''
+            - author_name: ''
+            - channel_on_error: ''
+            - pretext: ''
+            - pretext_on_error: ''
+            - message_on_error: |+
+                $BITRISE_APP_TITLE » $BITRISE_TRIGGERED_WORKFLOW_TITLE - #$BITRISE_BUILD_NUMBER *Failure*
+                <$BITRISE_BUILD_URL|Open>
+            - message: |+
+                $BITRISE_APP_TITLE » $BITRISE_TRIGGERED_WORKFLOW_TITLE - #$BITRISE_BUILD_NUMBER *Success*
+                <$BITRISE_BUILD_URL|Open>
+            - fields: ''
+            - buttons: ''
+            - footer: ''
+            - footer_icon: ''
+            - timestamp: 'no'
+            - icon_url_on_error: ''
+            - from_username_on_error: ''
+            - color_on_error: "#d10b20"
+  _setup-env:
+    steps:
+      - set-java-version@1:
+          inputs:
+            - set_java_version: '11'
+      - git-clone@6:
+          inputs:
+            - fetch_tags: 'yes'
+            - merge_pr: 'no'
+            - update_submodules: 'yes'
+  _run-sonarqube-scanner:
+    steps:
+      - script@1:
+          title: Prepare branches to feed in sonar.gradle
+          description: This step ensures that source and destination branches exist. For sonarqube to work, the current working branch should be the source branch.
+          inputs:
+            - content: |-
+                #!/bin/bash
+                set -e
+                if [[ $BITRISE_GIT_TAG != "" ]]; then
+                  echo "Branch analysis but using tag name. BITRISE_GIT_TAG=$BITRISE_GIT_TAG"
+                  git fetch --no-tags origin $BITRISE_GIT_TAG
+                  git checkout $BITRISE_GIT_TAG
+                elif [[ $BITRISEIO_PULL_REQUEST_REPOSITORY_URL == "" ]]; then
+                  echo "Normal branch analysis. BITRISE_GIT_BRANCH=$BITRISE_GIT_BRANCH"
+                  git fetch --no-tags origin $BITRISE_GIT_BRANCH
+                  git switch $BITRISE_GIT_BRANCH
+                else
+                  # PR analysis
+                  git fetch --no-tags origin $BITRISEIO_GIT_BRANCH_DEST
+                  echo "PR analysis. BITRISEIO_GIT_BRANCH_DEST=$BITRISEIO_GIT_BRANCH_DEST. BITRISE_GIT_BRANCH=$BITRISE_GIT_BRANCH"
+                  if [[ $BITRISEIO_PULL_REQUEST_REPOSITORY_URL != "" && \
+                    $GIT_REPOSITORY_URL != $BITRISEIO_PULL_REQUEST_REPOSITORY_URL ]]; then
+                    # Fork
+                    git switch -C $BITRISE_GIT_BRANCH
+                  else
+                    # Non-fork
+                    git fetch --no-tags origin $BITRISE_GIT_BRANCH
+                    git switch $BITRISE_GIT_BRANCH
+                  fi    
+                fi
+      - script@1:
+          run_if: '{{getenv "SONARQUBE_TOKEN" | ne ""}}'
+          title: Run SonarQube Scanner
+          inputs:
+            - content: ./gradlew sonarqube
+  _common-start:
+    steps:
+      - cache-pull@2: {}
+      - script@1:
+          title: Run Dependency Check
+          inputs:
+            - timeout: 1800
+            - content: "./gradlew dependencyCheckAggregate"
+  _common-end:
+    after_run:
+      - _run-sonarqube-scanner
+    steps:
+      - script@1:
+          title: Danger
+          run_if: '{{enveq "RUN_DANGER" "true"}}'
+          inputs:
+            - content: |-
+                bundle install
+                bundle exec danger --dangerfile=config/danger/Dangerfile
+      - deploy-to-bitrise-io@2: {}
+      - cache-push@2:
+          inputs:
+            - cache_paths: |-
+                $HOME/.gradle
+                ./.gradle
+                $HOME/.m2
+            - ignore_check_on_paths: |-
+                $HOME/.gradle/caches/*.lock
+                ./.gradle/*.lock
+                ./.gradle/*.bin
+meta:
+  bitrise.io:
+    stack: linux-docker-android-20.04
+    machine_type_id: elite
+app:
+  envs:
+    - opts:
+        is_expand: false
+      SDK_PATH: OJT
